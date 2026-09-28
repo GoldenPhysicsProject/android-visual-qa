@@ -1,0 +1,121 @@
+name: Android visual QA
+
+on:
+  workflow_call:
+    inputs:
+      build-command:
+        description: Command that builds the debug APK
+        required: true
+        type: string
+      prebuild-command:
+        description: Optional setup command run before the build
+        required: false
+        default: ""
+        type: string
+      apk-path:
+        description: Path to the APK produced by the build
+        required: true
+        type: string
+      package-name:
+        description: Android application ID
+        required: true
+        type: string
+      launch-activity:
+        description: Activity passed to adb am start
+        required: false
+        default: ".MainActivity"
+        type: string
+      walkthrough-script:
+        description: Optional executable shell script in the caller repository
+        required: false
+        default: ""
+        type: string
+      api-level:
+        description: Android API level
+        required: false
+        default: 33
+        type: number
+      profile:
+        description: Emulator hardware profile
+        required: false
+        default: "pixel_6"
+        type: string
+      artifact-name:
+        description: Uploaded artifact name
+        required: false
+        default: "android-visual-qa"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  visual-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APK_PATH: ${{ inputs.apk-path }}
+      PACKAGE_NAME: ${{ inputs.package-name }}
+      LAUNCH_ACTIVITY: ${{ inputs.launch-activity }}
+      WALKTHROUGH_SCRIPT: ${{ inputs.walkthrough-script }}
+
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v5
+
+      - name: Check out visual QA harness
+        uses: actions/checkout@v5
+        with:
+          repository: GoldenPhysicsProject/android-visual-qa
+          ref: main
+          path: .android-visual-qa
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Pre-build setup
+        if: ${{ inputs.prebuild-command != '' }}
+        shell: bash
+        run: ${{ inputs.prebuild-command }}
+
+      - name: Build APK
+        shell: bash
+        run: ${{ inputs.build-command }}
+
+      - name: Verify APK
+        shell: bash
+        run: test -s "$APK_PATH"
+
+      - name: Boot emulator and run visual QA
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ inputs.profile }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            mkdir -p visual-qa ui-dumps
+            if [ -n "$WALKTHROUGH_SCRIPT" ]; then
+              bash "$WALKTHROUGH_SCRIPT"
+            else
+              bash .android-visual-qa/scripts/default-walkthrough.sh
+            fi
+
+      - name: Upload visual QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            visual-qa/
+            ui-dumps/
+            app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+          retention-days: 14
