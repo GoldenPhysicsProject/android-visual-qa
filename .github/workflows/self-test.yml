@@ -1,0 +1,34 @@
+name: Harness self-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'sample/**'
+      - 'scripts/**'
+      - '.github/workflows/android-visual-qa.yml'
+      - '.github/workflows/self-test.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-visual-qa-self-test
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    uses: ./.github/workflows/android-visual-qa.yml
+    with:
+      gradle-version: "8.7"
+      api-level: 33
+      profile: pixel_6
+      prebuild-command: |
+        yes | sdkmanager --licenses >/dev/null 2>&1 || true
+        sdkmanager "platforms;android-33" "build-tools;33.0.2"
+      build-command: gradle -p sample --no-daemon assembleDebug
+      apk-path: sample/app/build/outputs/apk/debug/app-debug.apk
+      package-name: dev.goldenphysics.visualqa.sample
+      launch-activity: .MainActivity
+      artifact-name: android-visual-qa-self-test
