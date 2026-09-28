@@ -1,0 +1,223 @@
+name: API Vault release lane
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private API Vault branch, tag, or commit to validate
+        required: true
+        default: codex/launch-positioning-refine
+        type: string
+      deploy:
+        description: Deploy the validated web build to vault.goldenphysics.org
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: api-vault-free-release-lane
+  cancel-in-progress: false
+
+env:
+  GPP_SOURCE_REPOSITORY: GoldenPhysicsProject/api-vault
+  GPP_SOURCE_REF: ${{ inputs.source_ref }}
+  GPP_BRIDGE_URL: https://dunrgpupddbmzffntwph.supabase.co/functions/v1/gpp-bridge
+
+jobs:
+  web:
+    name: Web app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch pinned private API Vault source
+        id: source
+        run: bash scripts/fetch-private-source.sh
+      - name: Install and validate web app
+        working-directory: source/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run build
+          test -s dist/index.html
+          test -s dist/app/index.html
+          test -s dist/consent/index.html
+          test -s dist/privacy.html
+          test -s dist/terms.html
+          test -s dist/support.html
+          test -s dist/delete-account.html
+          test -s dist/sw.js
+          test -s dist/_worker.js
+          node --check dist/_worker.js
+          ! grep -R -F 'api-vault-gpp.vercel.app' dist --exclude='*.map'
+          find dist -type f -name '*.map' -delete
+          printf '%s\n' "$GPP_SOURCE_SHA" > dist/source-sha.txt
+      - name: Upload public web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-vault-public-web
+          path: source/web/dist
+          if-no-files-found: error
+          retention-days: 2
+
+  backend:
+    name: MCP OAuth backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Fetch pinned private API Vault source
+        run: bash scripts/fetch-private-source.sh
+      - name: Check backend source and connector contracts
+        working-directory: source
+        run: |
+          set -euo pipefail
+          node scripts/validate-mcp-oauth-source.mjs
+          deno check gateway/supabase/api-vault-mcp/index.ts
+          deno check gateway/supabase/api-vault-oauth/index.ts
+          deno check gateway/supabase/api-vault-delegation/index.ts
+          deno check gateway/supabase/api-vault-agent/index.ts
+          deno check gateway/supabase/api-vault-control/index.ts
+          deno check gateway/supabase/api-vault-sync/index.ts
+          deno check gateway/supabase/api-vault-gateway/index.ts
+          deno test gateway/supabase/_shared/google-api-origin_test.ts
+
+          SUPABASE_URL=https://dunrgpupddbmzffntwph.supabase.co             deno run --allow-env --allow-net gateway/supabase/api-vault-mcp/index.ts >/tmp/api-vault-mcp.log 2>&1 &
+          echo $! >/tmp/api-vault-mcp.pid
+          trap 'kill "$(cat /tmp/api-vault-mcp.pid)" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8000/health >/tmp/mcp-health.json && break
+            sleep 1
+          done
+          test -s /tmp/mcp-health.json
+          deno run --allow-env --allow-net scripts/validate-mcp-dual-era.ts
+          node scripts/validate-public-connectors.mjs
+
+  android:
+    name: Android build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Fetch pinned private API Vault source
+        run: bash scripts/fetch-private-source.sh
+      - name: Restore compile-only Firebase config if source omits it
+        working-directory: source
+        run: |
+          if [ ! -s app/google-services.json ]; then
+            cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "api-vault-ci",
+              "storage_bucket": "api-vault-ci.invalid"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                "android_client_info": {"package_name": "com.apivault.app"}
+              },
+              "oauth_client": [{"client_id":"000000000000-ci.apps.googleusercontent.com","client_type":3}],
+              "api_key": [{"current_key":"CI_PLACEHOLDER_NOT_A_REAL_KEY"}]
+            }],
+            "configuration_version":"1"
+          }
+          JSON
+          fi
+      - name: Validate Android and release bundle with disposable CI signing key
+        working-directory: source
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v             -keystore /tmp/api-vault-ci.jks             -storepass ci-only-pass             -keypass ci-only-pass             -alias api-vault-ci             -keyalg RSA -keysize 2048 -sigalg SHA256withRSA             -validity 2             -dname "CN=API Vault CI,O=Golden Physics Project,C=CA" >/dev/null 2>&1
+          gradle --no-daemon testDebugUnitTest lintDebug assembleDebug bundleRelease             -Pandroid.injected.signing.store.file=/tmp/api-vault-ci.jks             -Pandroid.injected.signing.store.password=ci-only-pass             -Pandroid.injected.signing.key.alias=api-vault-ci             -Pandroid.injected.signing.key.password=ci-only-pass
+          rm -f /tmp/api-vault-ci.jks
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -n "$(find app/build/outputs/bundle/release -name '*.aab' -type f -print -quit)"
+
+  deploy:
+    name: Deploy canonical web
+    if: ${{ inputs.deploy }}
+    needs: [web, backend, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-vault-public-web
+          path: dist
+      - name: Verify source provenance
+        run: |
+          set -euo pipefail
+          BUILD_SHA="$(tr -d '\r\n' < dist/source-sha.txt)"
+          test "$BUILD_SHA" = "${{ needs.web.outputs.source_sha }}"
+          rm dist/source-sha.txt
+          jq -nc             --arg api_vault_sha "$BUILD_SHA"             --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"             '{service:"api-vault-web",canonical_origin:"https://vault.goldenphysics.org",runtime:"cloudflare-pages",api_vault_sha:$api_vault_sha,frontdoor_source:"api-vault/web/public/_worker.js",deployed_at:$deployed_at}'             > dist/_deployment.json
+      - name: Obtain Cloudflare deployment credential through GPP Bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response="$(curl --fail-with-body --silent --show-error             --header "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpp-api-vault-pages-deploy")"
+          OIDC="$(jq -r '.value // empty' <<<"$oidc_response")"
+          test -n "$OIDC"
+          code="$(curl --silent --show-error             --output /tmp/pages-credentials.json             --write-out '%{http_code}'             --request POST             --header "Authorization: Bearer $OIDC"             "$GPP_BRIDGE_URL/gha-app-pages-credentials")"
+          test "$code" = "200"
+          jq -e '.ok == true and .result.cloudflare_token != null and .result.cloudflare_account_id != null' /tmp/pages-credentials.json >/dev/null
+          CF_TOKEN="$(jq -r '.result.cloudflare_token' /tmp/pages-credentials.json)"
+          CF_ACCOUNT="$(jq -r '.result.cloudflare_account_id' /tmp/pages-credentials.json)"
+          echo "::add-mask::$CF_TOKEN"
+          printf 'CLOUDFLARE_API_TOKEN=%s\n' "$CF_TOKEN" >> "$GITHUB_ENV"
+          printf 'CLOUDFLARE_ACCOUNT_ID=%s\n' "$CF_ACCOUNT" >> "$GITHUB_ENV"
+          rm -f /tmp/pages-credentials.json
+      - name: Deploy Cloudflare Pages
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.129.1 pages deploy dist             --project-name=gpp-api-vault-frontdoor             --branch=main             --commit-dirty=true
+      - name: Probe canonical deployment
+        run: |
+          set -euo pipefail
+          BUILD_SHA="${{ needs.web.outputs.source_sha }}"
+          for i in $(seq 1 30); do
+            health="$(curl --fail --silent https://vault.goldenphysics.org/_frontdoor/health 2>/dev/null || true)"
+            provenance="$(curl --fail --silent https://vault.goldenphysics.org/_deployment.json 2>/dev/null || true)"
+            if jq -e '.ok == true and .frontdoor_source == "api-vault/web/public/_worker.js"' >/dev/null <<<"$health"               && jq -e --arg s "$BUILD_SHA" '.api_vault_sha == $s and .frontdoor_source == "api-vault/web/public/_worker.js"' >/dev/null <<<"$provenance"; then
+              break
+            fi
+            sleep 10
+          done
+          jq -e '.ok == true and .frontdoor_source == "api-vault/web/public/_worker.js"' >/dev/null <<<"$health"
+          jq -e --arg s "$BUILD_SHA" '.api_vault_sha == $s' >/dev/null <<<"$provenance"
+          for path in / /app /consent /privacy.html /terms.html /support.html /delete-account.html /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/mcp; do
+            curl --fail --silent --show-error --location "https://vault.goldenphysics.org$path" >/dev/null
+          done
+          code="$(curl --silent --show-error --output /tmp/mcp.txt --write-out '%{http_code}' https://vault.goldenphysics.org/mcp)"
+          test "$code" = "405"
