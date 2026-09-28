@@ -30,6 +30,11 @@ on:
         required: false
         default: ""
         type: string
+      gradle-version:
+        description: Gradle version to install when the caller does not use the wrapper
+        required: false
+        default: "8.11.1"
+        type: string
       api-level:
         description: Android API level
         required: false
@@ -76,6 +81,10 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v4
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
 
       - name: Pre-build setup
         if: ${{ inputs.prebuild-command != '' }}
