@@ -1,0 +1,95 @@
+name: API Vault visual QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private API Vault branch, tag, or commit to render
+        required: true
+        default: codex/launch-positioning-refine
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: api-vault-free-visual-qa
+  cancel-in-progress: true
+
+env:
+  GPP_SOURCE_REPOSITORY: GoldenPhysicsProject/api-vault
+  GPP_SOURCE_REF: ${{ inputs.source_ref }}
+  GPP_BRIDGE_URL: https://dunrgpupddbmzffntwph.supabase.co/functions/v1/gpp-bridge
+
+jobs:
+  render:
+    name: Android 13 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v4
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Fetch pinned private API Vault source
+        run: bash scripts/fetch-private-source.sh
+
+      - name: Restore compile-only Firebase config if needed
+        working-directory: source
+        run: |
+          if [ ! -s app/google-services.json ]; then
+            cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "api-vault-visual-qa",
+              "storage_bucket": "api-vault-visual-qa.invalid"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                "android_client_info": {"package_name": "com.apivault.app"}
+              },
+              "oauth_client": [{"client_id":"000000000000-visual-qa.apps.googleusercontent.com","client_type":3}],
+              "api_key": [{"current_key":"VISUAL_QA_PLACEHOLDER_NOT_A_REAL_KEY"}]
+            }],
+            "configuration_version":"1"
+          }
+          JSON
+          fi
+
+      - name: Build debug APK
+        working-directory: source
+        run: gradle --no-daemon assembleDebug
+
+      - name: Render real API Vault screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: |
+            cd source
+            bash .github/scripts/android-visual-qa.sh
+
+      - name: Store screenshots in private results repo
+        if: always()
+        run: |
+          if [ -d source/visual-qa ] && find source/visual-qa -maxdepth 1 -name '*.png' -print -quit | grep -q .; then
+            bash scripts/upload-private-visual-results.sh api-vault source/visual-qa
+          else
+            echo "No screenshots were produced."
+          fi
