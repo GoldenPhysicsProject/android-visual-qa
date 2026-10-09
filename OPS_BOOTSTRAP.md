@@ -40,3 +40,17 @@ harness itself changes.
 After harness changes, update `OPS_STATE.md`, run the public self-test, inspect the
 screenshot artifact, and mirror the current state to Supabase under
 `app_id='android-visual-qa'`.
+
+
+## Expanded visual-QA scope — 2026-10-09
+
+The repository now also carries reusable/public-safe browser visual-QA plumbing used by the
+API Vault release lane. Keep the same security boundary: no private application source,
+credentials, signing material, or sensitive screenshots may be committed or published here.
+
+Private source may be fetched ephemerally through approved short-lived/OIDC broker paths when
+a workflow is explicitly designed for that purpose, but the repository itself remains a
+public harness, not a private source store or evidence archive.
+
+Record exact runner/platform choices because emulator stability is infrastructure behavior,
+not an application-quality signal.
