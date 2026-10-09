@@ -2,8 +2,9 @@
 
 This repository is generic public infrastructure, not an application product.
 
-Read `README.md`, `APP_PLAN.md`, and `OPS_STATE.md` before changing it. Shared Golden Physics app
-operations rules live in `GoldenPhysicsProject/GPP-bridge/rules/GPPAPPS.md`.
+Read `GoldenPhysicsProject/GPP-bridge/apps.bootstrap.md`, `apps.status.md`, and
+`GoldenPhysicsProject/GPP-bridge/rules/GPPAPPS.md` first, then read `README.md`,
+`APP_PLAN.md`, and `OPS_STATE.md` before changing it.
 
 ## Purpose
 
