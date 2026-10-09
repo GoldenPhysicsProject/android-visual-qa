@@ -104,3 +104,102 @@ jobs:
           else
             echo "No screenshots were produced."
           fi
+
+
+  browser:
+    name: Browser visual QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch pinned private API Vault source
+        run: bash scripts/fetch-private-source.sh
+
+      - name: Build exact web source
+        working-directory: source/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          npm install --no-save --package-lock=false playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      - name: Render desktop and mobile browser surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source/visual-qa-browser
+          python3 -m http.server 4173 --directory source/web/dist >/tmp/api-vault-browser-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          cd source/web
+          node --input-type=module <<'JS'
+          import { chromium } from "playwright";
+          import fs from "node:fs";
+
+          const base = "http://127.0.0.1:4173";
+          const out = "../visual-qa-browser";
+          const browser = await chromium.launch({ headless: true });
+          const errors = [];
+
+          async function capture(name, path, viewport, routeFirebase = false) {
+            const context = await browser.newContext({
+              viewport,
+              colorScheme: "dark",
+              reducedMotion: "reduce",
+            });
+            const page = await context.newPage();
+            page.on("pageerror", (error) => errors.push({ name, type: "pageerror", message: error.message }));
+            if (routeFirebase) {
+              await page.route("**/_firebase/config", async (route) => {
+                await route.fulfill({
+                  status: 200,
+                  contentType: "application/json",
+                  body: JSON.stringify({
+                    apiKey: "visual-qa-placeholder",
+                    authDomain: "api-vault-visual-qa.invalid",
+                    projectId: "api-vault-visual-qa",
+                    appId: "1:000000000000:web:0000000000000000000000",
+                  }),
+                });
+              });
+            }
+            const response = await page.goto(base + path, { waitUntil: "networkidle" });
+            if (!response || !response.ok()) throw new Error(`${name}: HTTP ${response?.status() ?? "no response"}`);
+            await page.screenshot({ path: `${out}/${name}.png`, fullPage: true, animations: "disabled" });
+            await context.close();
+          }
+
+          await capture("browser-home-desktop", "/", { width: 1440, height: 1000 });
+          await capture("browser-home-mobile", "/", { width: 390, height: 844 });
+          await capture("browser-support-desktop", "/support.html", { width: 1280, height: 900 });
+          await capture("browser-app-signin-desktop", "/app/", { width: 1280, height: 900 }, true);
+
+          await browser.close();
+          fs.writeFileSync(`${out}/browser-report.json`, JSON.stringify({ source: process.env.GPP_SOURCE_SHA, errors }, null, 2));
+          const landingErrors = errors.filter((item) => item.name.startsWith("browser-home"));
+          if (landingErrors.length) {
+            console.error(JSON.stringify(landingErrors, null, 2));
+            process.exit(1);
+          }
+          JS
+
+      - name: Store browser screenshots in private results repo
+        if: always()
+        run: |
+          if [ -d source/visual-qa-browser ] && find source/visual-qa-browser -maxdepth 1 -name '*.png' -print -quit | grep -q .; then
+            bash scripts/upload-private-visual-results.sh api-vault source/visual-qa-browser
+          else
+            echo "No browser screenshots were produced."
+            exit 1
+          fi
