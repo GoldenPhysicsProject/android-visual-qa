@@ -150,7 +150,7 @@ jobs:
           const browser = await chromium.launch({ headless: true });
           const errors = [];
 
-          async function capture(name, path, viewport, routeFirebase = false) {
+          async function capture(name, path, viewport, routeFirebase = false, fullPage = true) {
             const context = await browser.newContext({
               viewport,
               colorScheme: "dark",
@@ -174,14 +174,16 @@ jobs:
             }
             const response = await page.goto(base + path, { waitUntil: "networkidle" });
             if (!response || !response.ok()) throw new Error(`${name}: HTTP ${response?.status() ?? "no response"}`);
-            await page.screenshot({ path: `${out}/${name}.png`, fullPage: true, animations: "disabled" });
+            await page.screenshot({ path: `${out}/${name}.png`, fullPage, animations: "disabled" });
             await context.close();
           }
 
+          await capture("browser-home-desktop-fold", "/", { width: 1440, height: 1000 }, false, false);
+          await capture("browser-home-mobile-fold", "/", { width: 390, height: 844 }, false, false);
           await capture("browser-home-desktop", "/", { width: 1440, height: 1000 });
           await capture("browser-home-mobile", "/", { width: 390, height: 844 });
           await capture("browser-support-desktop", "/support.html", { width: 1280, height: 900 });
-          await capture("browser-app-signin-desktop", "/app/", { width: 1280, height: 900 }, true);
+          await capture("browser-app-signin-desktop", "/app/", { width: 1280, height: 900 }, true, false);
 
           await browser.close();
           fs.writeFileSync(`${out}/browser-report.json`, JSON.stringify({ source: process.env.GPP_SOURCE_SHA, errors }, null, 2));
