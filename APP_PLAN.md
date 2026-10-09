@@ -1,18 +1,20 @@
-# Android Visual QA / Auroculum harness plan
+# Android Visual QA infrastructure plan
 
 Updated: 2026-10-09.
 
-This repository is public, reusable QA infrastructure. It is not itself the full Auroculum product and must remain safe to expose publicly.
-
 ## Role
 
-Provide generic execution plumbing that Auroculum and individual app release workflows can use for:
+This repository is public, reusable execution infrastructure for visual/device/browser QA.
+It is not a private application source store and not the place for confidential product/IP
+architecture.
+
+It should provide reusable plumbing for:
 - Android emulator/device QA;
 - browser visual QA;
 - screenshots and UI hierarchy capture;
 - instrumentation/device tests;
 - evidence collection;
-- private-source release validation through approved short-lived broker paths.
+- release validation using caller-owned logic.
 
 ## Public/private boundary
 
@@ -26,26 +28,27 @@ It must not contain:
 - sensitive screenshots/evidence;
 - private customer/test data.
 
-Private source may exist only ephemerally in an approved runner after short-lived authorization and should be pinned to an immutable source revision.
+If an approved workflow obtains private source ephemerally, it must do so through a
+short-lived authorized path and must not publish that source as an artifact.
 
-Private evidence should return to trusted/private storage rather than public artifacts when it may contain sensitive product state.
+Sensitive evidence belongs in private storage.
 
-## Auroculum relationship
+## Architecture direction
 
-Auroculum is the higher-level product/system that decides what to inspect, operates the environment, combines multimodal evidence, diagnoses failures, and independently verifies repairs.
+Keep the harness modular:
+- generic reusable runner plumbing;
+- caller-owned app-specific walkthroughs/assertions;
+- explicit runner/platform configuration;
+- evidence capture separated from product pass/fail policy;
+- exact source/build provenance where supported.
 
-This repo supplies execution substrate. Product-specific intelligence and confidential invention detail belong in private Auroculum/GPP Bridge records.
-
-## Evidence goals
-
-Keep support for:
-- rendered screenshots;
+Support useful evidence such as:
+- screenshots;
 - UIAutomator/accessibility structures;
 - browser DOM/accessibility;
 - console/network traces;
 - logcat/runtime output;
-- instrumentation/test results;
-- exact source/build provenance.
+- instrumentation/test results.
 
 Preserve artifacts on failure when safe.
 
@@ -59,9 +62,13 @@ Separate:
 
 Do not blame the app for a runner that never booted.
 
+Private higher-level productization and invention-sensitive architecture built on this
+harness belong in private Golden Physics records, not this public repository.
+
 ## Recording rule
 
-Update this plan for durable harness/Auroculum-boundary changes.
+Update this file when the public harness purpose, supported execution targets, security
+boundary, or evidence model changes.
 
 Update `OPS_STATE.md` for exact runner/platform/workflow/validation state.
 
