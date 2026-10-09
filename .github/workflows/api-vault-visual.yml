@@ -92,9 +92,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           disable-linux-hw-accel: false
-          script: |
-            cd source
-            bash .github/scripts/android-visual-qa.sh
+          script: cd source && bash .github/scripts/android-visual-qa.sh
 
       - name: Store screenshots in private results repo
         if: always()
