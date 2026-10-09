@@ -2,7 +2,7 @@
 
 This repository is generic public infrastructure, not an application product.
 
-Read `README.md` and `OPS_STATE.md` before changing it. Shared Golden Physics app
+Read `README.md`, `APP_PLAN.md`, and `OPS_STATE.md` before changing it. Shared Golden Physics app
 operations rules live in `GoldenPhysicsProject/GPP-bridge/rules/GPPAPPS.md`.
 
 ## Purpose
@@ -54,3 +54,6 @@ public harness, not a private source store or evidence archive.
 
 Record exact runner/platform choices because emulator stability is infrastructure behavior,
 not an application-quality signal.
+
+
+Update `APP_PLAN.md` whenever the durable harness/Auroculum boundary or architecture changes; keep volatile runner/workflow status in `OPS_STATE.md`.
